@@ -5,15 +5,21 @@
 #include <utility>
 #include <fstream>
 #include <sstream>
-
-#include "../../include/graph/Graph.h"
-#include "../../include/util/MinHeap.h"
-
 #include <iostream>
 #include <ranges>
+#include <list>
 #include <unordered_set>
+#include <queue>
+#include <unordered_map>
+#include <vector>
 
-Graph::Graph(AdjMap adj) : adj(std::move(adj)) {}
+#include "../../include/graph/Graph.h"
+
+Graph::Graph(AdjMap adj) : adj(std::move(adj)) {
+    buckets.resize(2000);
+    degrees.resize(this->adj.size());
+    bucket_position.resize(this->adj.size());
+}
 
 Graph Graph::from_mtx(const std::string &path, bool weighted, bool directed) {
     std::ifstream in(path);
@@ -57,10 +63,10 @@ Graph Graph::from_mtx(const std::string &path, bool weighted, bool directed) {
         }
     }
 
-    auto to_return = Graph(adj);
-    to_return.cache_attributes();
+    auto g = Graph(adj);
+    g.populate_buckets();
 
-    return to_return;
+    return g;
 }
 
 std::vector<unsigned long> Graph::bfs_traversal(const unsigned long start) {
@@ -88,15 +94,6 @@ std::vector<unsigned long> Graph::bfs_traversal(const unsigned long start) {
     return order;
 }
 
-void Graph::cache_attributes() {
-    for (const auto &[u, edges] : adj) {
-        for (const auto &[v, w] : edges) {
-            auto edge = std::make_tuple(u, v);
-            all_edges.insert(edge);
-        }
-    }
-}
-
 std::vector<unsigned long> Graph::get_neighbors(const unsigned long vertex) {
     std::vector<unsigned long> neighbors;
     for (const auto &[v, w] : adj.at(vertex)) {
@@ -106,88 +103,124 @@ std::vector<unsigned long> Graph::get_neighbors(const unsigned long vertex) {
     return neighbors;
 }
 
-Graph::AdjMap Graph::get_star(const AdjMap& h, const unsigned long vertex) {
-    auto map = std::unordered_map<unsigned long, std::vector<Edge>>();
-    map[vertex] = h.at(vertex);
-    map[vertex].push_back({vertex, 0});
+std::vector<unsigned long> Graph::get_star(const unsigned long vertex) {
+    auto star = std::vector<unsigned long>();
+    star.push_back(vertex);
 
-    return map;
+    for (const auto &[to, w]: adj.at(vertex)) {
+        star.push_back(to);
+    }
+
+    return star;
 }
 
-void Graph::min_degree_elim(AdjMap &g, const unsigned long vertex) {
-    const std::vector<unsigned long> neighbors = get_neighbors(vertex);
+void Graph::populate_buckets() {
+    for (const auto &[u, edges] : adj) {
+        const unsigned long deg = edges.size();
 
-    for (const auto u : neighbors) {
-        for (const auto w : neighbors) {
+        buckets[deg].push_back(u);
+        bucket_position[u] = std::prev(buckets[deg].end());
+        degrees[u] = deg;
+    }
+}
 
-            if (u == w) continue;
+void Graph::eliminate_vertex(const unsigned long v) {
+    const auto neighbors = get_neighbors(v);
 
-            const auto weight_u_v_it = std::ranges::find_if(adj.at(u),
-                                                      [vertex](const Edge &e) { return e.to == vertex; });
-            const unsigned long weight_u_v = weight_u_v_it->w;
+    // fills in edges w/ updated weights
+    for (size_t i = 0; i < neighbors.size(); i++) {
+        for (size_t j = i + 1; j < neighbors.size(); j++) {
+            unsigned long u = neighbors[i];
+            unsigned long w = neighbors[j];
 
+            const unsigned long uvw_weight = get_edge_weight(u, v) + get_edge_weight(v, w);
 
-            const auto weight_v_w_it = std::ranges::find_if(adj.at(vertex),
-                                                      [w](const Edge &e) { return e.to == w; });
+            if (!edge_exists(u, w)) {
+                adj[u].push_back({w, uvw_weight});
+                adj[w].push_back({u, uvw_weight});
+            } else if (uvw_weight < get_edge_weight(u, w)) {
+                adj[u].erase(std::ranges::find_if(adj[u], [&](const Edge& e) {return e.to == w;}));
+                adj[w].erase(std::ranges::find_if(adj[w], [&](const Edge& e) {return e.to == u;}));
 
-            const unsigned long weight_v_w = weight_v_w_it->w;
-            auto existing_edge_it = std::ranges::find_if(g[u],
-                                                         [w](const Edge &e) { return e.to == w; });
-
-            if (existing_edge_it == g[u].end()) {
-                g[u].push_back({w, weight_u_v + weight_v_w});
-                g[w].push_back({u, weight_u_v + weight_v_w});
-                all_edges.insert(std::make_tuple(u, w));
-                all_edges.insert(std::make_tuple(w, u));
-            } else {
-                if (weight_u_v + weight_v_w < existing_edge_it->w) {
-                    existing_edge_it->w = weight_u_v + weight_v_w;
-
-                    auto reverse_edge_it = std::ranges::find_if(g[w],
-                                                                [u](const Edge &e) { return e.to == u; });
-                    if (reverse_edge_it != g[w].end()) {
-                        reverse_edge_it->w = weight_u_v + weight_v_w;
-                    }
-                }
+                adj[u].push_back({w, uvw_weight});
+                adj[w].push_back({u, uvw_weight});
             }
         }
     }
 
-    g.erase(vertex);
-    for (auto neighbor : neighbors) {
-        auto &outward_edges = g[neighbor];
-        std::erase_if(outward_edges, [vertex](const Edge &e){ return e.to == vertex; });
+    // removes any outward edges from neighbors to vertex
+    for (const auto& neighbor : neighbors) {
+        adj.at(neighbor).erase(std::ranges::find_if(adj.at(neighbor), [&](const Edge& e) {return e.to == v;}));
+    }
+
+    // erases vertex
+    adj.erase(v);
+
+    // updates buckets after edge correction
+    for (unsigned long neighbor : neighbors) {
+
+        auto& to_erase = adj.at(neighbor);
+
+        const unsigned long d1 = degrees[neighbor];
+        const unsigned long d2 = to_erase.size();
+
+        buckets[d1].erase(bucket_position[neighbor]);
+        buckets[d2].push_front(neighbor);
+        bucket_position[neighbor] = buckets[d2].begin();
+        degrees[neighbor] = d2;
     }
 }
 
+unsigned long Graph::pop_min_degree_vertex() {
+    unsigned long min_bucket = 0;
+
+    while (buckets[min_bucket].empty()) {
+        min_bucket++;
+    }
+
+    const unsigned long v = buckets[min_bucket].front();
+    buckets[min_bucket].pop_front();
+
+    return v;
+}
+
+bool Graph::edge_exists(const unsigned long u, const unsigned long v) {
+    if (!adj.contains(u)) return false;
+    if (!adj.contains(v)) return false;
+    return std::ranges::any_of(adj.at(u).begin(), adj.at(u).end(), [&](const Edge e) {return e.to == v;});
+}
+
+unsigned long Graph::get_edge_weight(const unsigned long u, const unsigned long v) {
+
+    if (u == v) return 0;
+
+    for (const auto& [to, w] : adj.at(u)) {
+        if (to == v) return w;
+    }
+
+    return -1;
+}
+
 std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::get_td() {
-    auto h = adj;
+    auto h = Graph(adj);
+    h.populate_buckets();
 
     std::vector<unsigned long> ordering(adj.size());
 
     unsigned long root = 0;
-    unsigned long step = 0;
+
     td_bags.clear();
     td_adj.clear();
 
-    MinHeap minHeap;
-    minHeap.reserve(adj.size());
-
-    for (const auto &[v, edges]: adj) {
-        minHeap.insert(v, edges.size());
-    }
-
     for (int i = 0; i < adj.size(); i++) {
-        unsigned long v_min_degree = minHeap.extract_min();
+        unsigned long v = pop_min_degree_vertex();
+        td_bags[v] = get_star(v);
 
-        td_bags[v_min_degree] = get_star(h, v_min_degree);
+        h.eliminate_vertex(v);
 
-        ordering[v_min_degree] = step++;
-        min_degree_elim(h, v_min_degree);
+        ordering[v] = i;
 
-        if (i % 10000 == 0) {
-            std::cout << "Finished bag " << i << std::endl;
-        }
+        if (i > 75000 && i % 100 == 0) std::cout << "Finished vertex " << i << std::endl;
     }
 
     std::cout << "Finished ordering" << std::endl;
@@ -198,20 +231,31 @@ std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::ge
         unsigned long min_ordering_val = std::numeric_limits<unsigned long>::max();
         unsigned long min_ordering_vertex = v;
 
-        for (const auto &[to, w] : bag.at(v)) {
-            if (to == v) continue;
-            if (ordering[to] < min_ordering_val) {
-                min_ordering_val = ordering[to];
-                min_ordering_vertex = to;
+        for (const unsigned long vertex : bag) {
+            if (vertex == v) continue;
+            if (ordering[vertex] < min_ordering_val) {
+                min_ordering_val = ordering[vertex];
+                min_ordering_vertex = vertex;
             }
         }
 
         if (min_ordering_vertex != v) {
             td_adj[min_ordering_vertex].push_back(v);
-            td_adj[v].push_back(min_ordering_vertex);
             root = min_ordering_vertex;
         }
     }
+
+    for (auto &bag: td_bags | std::views::values) {
+        // sorts vertices in bag in decreasing order of ordering values
+        std::ranges::sort(bag, [&](const unsigned long a, const unsigned long b) {return ordering[a] > ordering[b];});
+    }
+
+    for (auto &[v, neighbors] : td_bags) {
+        for (const auto& neighbor : neighbors) {
+            td_weights[v].push_back(get_edge_weight(v, neighbor));
+        }
+    }
+
 
     return {td_adj, td_bags, root};
 }
@@ -220,12 +264,8 @@ unsigned long Graph::treewidth(TreeDecompBags& bags) {
     unsigned long tw = 0;
 
     for (auto &adj: bags | std::views::values) {
-        for (auto &vertices : adj | std::views::values) {
-            tw = std::max(tw, vertices.size());
-        }
+        tw = std::max(tw, adj.size());
     }
 
     return tw - 1;
 }
-
-
