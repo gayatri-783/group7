@@ -17,11 +17,12 @@
 #include <iostream>
 
 Graph::Graph(AdjMap adj) : adj(std::move(adj)) {
-    buckets.resize(2000);
+    buckets.resize(1000);
     degrees.resize(this->adj.size());
     bucket_position.resize(this->adj.size());
 }
 
+// This method generated with Claude Sonnet 4.5
 Graph Graph::from_mtx(const std::string &path, bool weighted, bool directed) {
     std::ifstream in(path);
     if (!in.is_open()) {
@@ -122,6 +123,10 @@ void Graph::populate_buckets() {
         buckets[deg].push_back(u);
         bucket_position[u] = std::prev(buckets[deg].end());
         degrees[u] = deg;
+
+        for (const auto&[to, w] : edges) {
+            add_edge_cache(u, to);
+        }
     }
 }
 
@@ -139,7 +144,12 @@ void Graph::eliminate_vertex(const unsigned long v) {
             if (!edge_exists(u, w)) {
                 adj[u].push_back({w, uvw_weight});
                 adj[w].push_back({u, uvw_weight});
+
+                add_edge_cache(u, w);
+                add_edge_cache(w, u);
+
             } else if (uvw_weight < get_edge_weight(u, w)) {
+                // FIXME
                 adj[u].erase(std::ranges::find_if(adj[u], [&](const Edge& e) {return e.to == w;}));
                 adj[w].erase(std::ranges::find_if(adj[w], [&](const Edge& e) {return e.to == u;}));
 
@@ -151,6 +161,8 @@ void Graph::eliminate_vertex(const unsigned long v) {
 
     // removes any outward edges from neighbors to vertex
     for (const auto& neighbor : neighbors) {
+        remove_edge_cache(neighbor, v);
+        remove_edge_cache(v, neighbor);
         adj.at(neighbor).erase(std::ranges::find_if(adj.at(neighbor), [&](const Edge& e) {return e.to == v;}));
     }
 
@@ -158,7 +170,7 @@ void Graph::eliminate_vertex(const unsigned long v) {
     adj.erase(v);
     num_vertices -= 1;
 
-    // updates buckets after edge correction
+    // updates buckets after edge fill-in
     for (unsigned long neighbor : neighbors) {
 
         auto& to_erase = adj.at(neighbor);
@@ -173,6 +185,7 @@ void Graph::eliminate_vertex(const unsigned long v) {
     }
 }
 
+// obtains vertex with minimum degree and pops it from its corresponding bucket
 unsigned long Graph::pop_min_degree_vertex() {
     unsigned long min_bucket = 0;
 
@@ -186,10 +199,9 @@ unsigned long Graph::pop_min_degree_vertex() {
     return v;
 }
 
-bool Graph::edge_exists(const unsigned long u, const unsigned long v) {
-    if (!adj.contains(u)) return false;
-    if (!adj.contains(v)) return false;
-    return std::ranges::any_of(adj[u].begin(), adj[u].end(), [&](const Edge e) {return e.to == v;});
+bool Graph::edge_exists(const unsigned long u, const unsigned long v) const {
+    const uint64_t edge = (static_cast<uint64_t>(u) << 32) | static_cast<uint64_t>(v);
+    return edge_set.contains(edge);
 }
 
 unsigned long Graph::get_edge_weight(const unsigned long u, const unsigned long v) {
@@ -200,6 +212,19 @@ unsigned long Graph::get_edge_weight(const unsigned long u, const unsigned long 
     }
 
    return -1;
+}
+
+void Graph::add_edge_cache(const unsigned long u, const unsigned long v) {
+    // first 32 bits encode u (first shifted left 32 bits), last 32 bits encode v
+    const uint64_t edge_cache = (static_cast<uint64_t>(u) << 32) | static_cast<uint64_t>(v);
+
+    edge_set.insert(edge_cache);
+}
+
+void Graph::remove_edge_cache(const unsigned long u, const unsigned long v) {
+    const uint64_t edge_cache = (static_cast<uint64_t>(u) << 32) | static_cast<uint64_t>(v);
+
+    edge_set.erase(edge_cache);
 }
 
 std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::get_td() {
@@ -219,9 +244,15 @@ std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::ge
         h.eliminate_vertex(v);
 
         ordering[v] = i;
+
+        if (i % static_cast<int>(num_vertices / 10) == 0) {
+            std::cout << "Eliminated vertex " << i << " bag size " << td_bags[v].size() << std::endl;
+        }
     }
 
     unsigned long root = std::numeric_limits<unsigned long>::max();
+
+    std::cout << "Sorting vertices" << std::endl;
 
     for (unsigned long v = 0; v < ordering.size(); ++v) {
         const auto& bag = td_bags.at(v);
@@ -234,7 +265,7 @@ std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::ge
         unsigned long min_u = v;
         unsigned long best = std::numeric_limits<unsigned long>::max();
 
-        for (unsigned long u : bag) {
+        for (const unsigned long u : bag) {
             if (u != v && ordering[u] < best) {
                 best = ordering[u];
                 min_u = u;
@@ -261,8 +292,10 @@ std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::ge
 unsigned long Graph::treewidth(TreeDecompBags& bags) {
     unsigned long tw = 0;
 
-    for (auto &adj: bags | std::views::values) {
-        tw = std::max(tw, adj.size());
+    for (auto &bag: bags | std::views::values) {
+        if (bag.size() > tw) {
+            tw = bag.size();
+        }
     }
 
     return tw - 1;

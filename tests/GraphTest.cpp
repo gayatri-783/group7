@@ -33,6 +33,7 @@ protected:
 };
 
 TEST_F(Graphs, EdgeExists) {
+    graph.populate_buckets();
     EXPECT_TRUE(graph.edge_exists(0, 1));
     EXPECT_TRUE(graph.edge_exists(2, 1));
     EXPECT_TRUE(graph.edge_exists(2, 0));
