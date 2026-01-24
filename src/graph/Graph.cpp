@@ -11,6 +11,9 @@
 #include <queue>
 #include <unordered_map>
 #include <vector>
+#include <cstdint>
+#include <algorithm>
+
 
 #include "../../include/graph/Graph.h"
 
@@ -237,7 +240,7 @@ std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::ge
     td_bags.clear();
     td_adj.clear();
 
-    for (int i = 0; i < adj.size(); i++) {
+    for (unsigned long i = 0; i < adj.size(); i++) {
         unsigned long v = h.pop_min_degree_vertex();
 
         td_bags[v] = h.get_star(v);
@@ -250,7 +253,7 @@ std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::ge
         }
     }
 
-    unsigned long root = std::numeric_limits<unsigned long>::max();
+    unsigned long root = 1e9;
 
     std::cout << "Sorting vertices" << std::endl;
 
@@ -263,7 +266,7 @@ std::tuple<Graph::TreeDecompAdj, Graph::TreeDecompBags, unsigned long> Graph::ge
         }
 
         unsigned long min_u = v;
-        unsigned long best = std::numeric_limits<unsigned long>::max();
+        unsigned long best = 1e9;
 
         for (const unsigned long u : bag) {
             if (u != v && ordering[u] < best) {
