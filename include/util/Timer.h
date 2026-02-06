@@ -9,6 +9,8 @@
 
 #include <chrono>
 
+// Generated with Claude Sonnet 4.5
+
 class Timer {
 
 public:

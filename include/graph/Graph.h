@@ -6,6 +6,7 @@
 #define GROUP7_GRAPH_H
 #include <list>
 #include <unordered_map>
+#include <unordered_set>
 #include <set>
 
 #include "Edge.h"
@@ -41,11 +42,17 @@ public:
 
     void populate_buckets();
 
-    bool edge_exists(unsigned long u, unsigned long v);
+    bool edge_exists(unsigned long u, unsigned long v) const;
 
     std::vector<unsigned long> get_neighbors(unsigned long vertex);
 
     unsigned long get_edge_weight(unsigned long u, unsigned long v);
+
+    void add_edge_cache(unsigned long u, unsigned long v);
+
+    void remove_edge_cache(unsigned long u, unsigned long v);
+
+    void change_edge_weight_cache(unsigned long u, unsigned long v);
 
     // returns adj, bags, root of tree decomposition
     std::tuple<TreeDecompAdj, TreeDecompBags, unsigned long> get_td();
@@ -67,6 +74,8 @@ private:
     TreeDecompAdj td_adj;
     TreeDecompBags td_bags;
     TreeDecompWeights td_weights;
+
+    std::unordered_set<uint64_t> edge_set;
 
     std::vector<std::list<unsigned long>> buckets;
     std::vector<unsigned long> degrees;
